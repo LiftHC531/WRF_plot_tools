@@ -73,8 +73,10 @@ def check_plt_time(nt,times):
           check_time = np.where(check_time == "y","Y",check_time)
     return tid
 
-
-
+#Shapefile reference: http://www.diva-gis.org/gdata
+#                     https://data.gov.tw/dataset/7442
+#                     https://data.gov.tw/dataset/13795
+#Local Path: /home/WRF/shapefile/(Shimen/)
 def add_shapefile_polylines(ff,wks,plot,color="black",thick=10.0):
     """ Attach shapefile polylines to map """
     f_shap = Nio.open_file(ff, "r")
@@ -121,7 +123,6 @@ def get_shp_traces(ff,color="black",thick=10.0):
             data['x'] = data['x'] + lon_cc.tolist() + [np.nan]
             data['y'] = data['y'] + lat_cc.tolist() + [np.nan]
     return [data]
-
 
 def plt_marker(wks,plot,lat,lon,log,jc=50,ic=50,\
                    idx=12,sz=20.0,tk=10.0,cr="black"):
@@ -306,7 +307,7 @@ if __name__ == '__main__':
    add_files()
    check_plt_time()
    add_shapefile_polylines()
-   get_shp_traces()
+   get_shp_traces() # plotly
    plt_marker()
    interp_z()
    ngl_Strings()

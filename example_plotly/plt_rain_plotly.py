@@ -44,10 +44,18 @@ def get_title(times):
 
 
 # Get list of of coastline, country and state lon/lat traces
+ffs = []
 path = "/home/WRF/shapefile/Shimen/"
-ff = path+"COUNTY_MOI_1080617.shp" #"TWN_adm2.shp"
-f_dam = path+"290---polygon.shp" # All dam
-traces_cc = wrf_tools.get_shp_traces(ff) + wrf_tools.get_shp_traces(f_dam,color="blue")
+ffs.append(path+"COUNTY_MOI_1080617.shp") #"TWN_adm2.shp"
+f_dam = path+"290-RESVR_storage_RNG.shp" # All reservoir at TW 
+path = "/home/WRF/shapefile/"
+ffs.append(path+"CHN_adm0.shp")
+#ffs.append(path+"JPN_adm0.shp")
+#ffs.append(path+"PHL_adm0.shp")
+traces_map_shp = wrf_tools.get_shp_traces(ffs[0])
+for ff in ffs[1:len(ffs)+1]:
+    traces_map_shp += wrf_tools.get_shp_traces(ff)
+#traces_map_shp += wrf_tools.get_shp_traces(f_dam,color="blue")
 #--------------------------------------------------------------------
 start_time = cpu_time()
 undef = np.float64(9.96920996839e+36)
@@ -57,7 +65,7 @@ ff = nc.Dataset(File); #ff = Nio.open_file(File+".nc") #two ways for read
 (ntimes, nlev, nlat, nlon, \
 times, lat, lon, res_base) = wrf_tools.info(ff)
 aim_pt = [nlat//2, nlon//2] #j, i
-rg = 5
+rg = 3 
 
 #tid = wrf_tools.check_plt_time(ntimes, times)
 tid = []
@@ -70,8 +78,8 @@ leftname = get_title(tt)
 
 # [OUTPUT] Grid on destination rectilinear grid (or read the 1D lat and lon from
 #          an other .nc file.
-newlat1D_rect = np.linspace(lat.min()+0.05, lat.max()-0.05, nlat)
-newlon1D_rect = np.linspace(lon.min()+0.05, lon.max()-0.05, nlon)
+newlat1D_rect = np.linspace(lat.min()+0.15, lat.max()-0.15, nlat)
+newlon1D_rect = np.linspace(lon.min()+0.15, lon.max()-0.15, nlon)
 var_cmax_rect = geocat.comp.rcm2rgrid(lat[:,:], lon[:,:], rain, newlat1D_rect, newlon1D_rect)
 
 """ Plot """
@@ -103,13 +111,11 @@ trace.append( go.Contour(
 
             ))
 
-data = trace + traces_cc
-title = leftname
+data = trace + traces_map_shp
 
 layout = go.Layout(
-    title=title,
+    title=leftname,
     showlegend=False,
-    hovermode="closest",        # highlight closest point on hover
     xaxis={
         'zeroline':False,
         'showticklabels':False,
@@ -126,6 +132,8 @@ layout = go.Layout(
         'ticks':'',
         'range':[lat[aim_pt[0],aim_pt[1]]-rg,lat[aim_pt[0],aim_pt[1]]+rg],  # restrict y-axis to range of lat
           },
+    hovermode="closest",        # highlight closest point on hover
+    font=dict(family="Times New Roman",size=18),
     autosize=False,
     width=800,
     height=800,
