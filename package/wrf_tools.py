@@ -1,32 +1,71 @@
+import os, glob
 import numpy as np
-from wrf import getvar,ALL_TIMES,get_pyngl,latlon_coords,to_np, \
-                interplevel
+from wrf import (getvar,ALL_TIMES,get_pyngl,latlon_coords,to_np, 
+                 interplevel,ll_to_xy
+                )
 import Ngl, Nio
-import glob
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 
 #Li-Hsin Chen 2020
+fill_value = 9.96920996839e+36 # undef
 
-def info(ff):
-    var = getvar(ff, "QCLOUD", timeidx=0)
-    nz = np.int32(len(var[:,0,0]))
-    ny = np.int32(len(var[0,:,0]))
-    nx = np.int32(len(var[0,0,:])) 
+def Reservoir_loc(ff):
+    ''' 
+    Find the Finds the nearest WRF-ARW model grid indexes (0-based)
+    that are the closest to the requested longitude and latitude locations. 
+    NCL function: wrf_user_ll_to_xy
+    https://wrf-python.readthedocs.io/en/latest/user_api/generated/wrf.ll_to_xy.html#wrf.ll_to_xy
+    '''
+    pt = np.array([ 
+           [24.8122852,121.2435974], #石門壩頂
+           [24.819641,121.2655963],  #石門苗圃(Shihmen Bed)
+           [24.8040328,121.232893],  #佛陀世界自然禪修閉關園區(石門)
+           [23.2505505,120.5345249], #曾文壩頂
+           [23.2989173,120.5831085], #湖濱公園六角亭(曾文)
+           [23.0863039,120.5345926], #南化壩頂
+         ])
+    name = ['石門壩頂','石門苗圃','佛陀世界自然禪修閉關園區(石門)',
+            '曾文壩頂','湖濱公園六角亭(曾文)',
+            '南化壩頂',
+           ]
+    x_y = np.empty(shape=pt.shape,dtype=np.int); #print(x_y.shape)
+    for i in range(len(pt[:,0])):
+        x_y[i,:] = ll_to_xy(ff,pt[i,0],pt[i,1]).values
+        print('\033[94m{}\033[0m(y: {}, x:{})'.format(name[i],x_y[i,1],x_y[i,0]))
+    return pt, x_y  
+       
+def info(ff,pyngl_map=True,print_timeid=False):
+    ''' domain information of WRF output '''
+    ts = getvar(ff, "times", timeidx=ALL_TIMES) #-1 isn't work
+    nt = np.int32(len(ts))
+    dtimes = []
+    for t in ts:
+        dtimes.append(str(t.values)[0:19])
+    #print("\033[44m{}\033[0m".format(dtimes[0]))
+    var = getvar(ff, "QCLOUD", timeidx=0) #Xarray
+    (nz, ny, nx) = var.shape #nz = np.int32(len(var[:,0,0]))
     (lat,lon) = latlon_coords(var) # Get the latitude and longitude points
     lat = to_np(lat); lon = to_np(lon)
-    #Set some map options based on information in WRF output file
-    res = get_pyngl(var); del var 
-    res.tfDoNDCOverlay = True # required for native projection
-    t = getvar(ff, "times", timeidx=ALL_TIMES) #-1 isn't work
-    nt = np.int32(len(t))
-    print("Domain:{}".format(nt)+"|{}".format(nz)+\
-    "|{}".format(ny)+"|{} ".format(nx)+"."*6+"Get Dimensions!! \
-    \nGet WRF map-related resources and coordinates(lat. & long.)")
-    return nt, nz, ny, nx, t, lat, lon, res
+    print(u'nt:{}'.format(nt)+'|nz:{}'.format(nz)+\
+    '|ny:{}'.format(ny)+'|nx:{} '.format(nx)+'.'*6+'Get Dimensions '+ \
+    'and coordinates(lat. & long.)') 
+    if pyngl_map:
+       #Set some map options based on information in WRF output file
+       res = get_pyngl(var); del var 
+       res.tfDoNDCOverlay = True # required for native projection
+       print('pyngl_map = {}, Get WRF map-related resources'.format(pyngl_map))
+    else:
+       res = Ngl.Resources()
+    if print_timeid:
+       for i,dtime in enumerate(dtimes):
+           print('\033[95m({:02d}){}\033[0m'.format(i,dtime))
+           
+    return nt, nz, ny, nx, dtimes, lat, lon, res
 
-def search_wrf_file(Path="./"):
-    FileID = glob.glob(Path+"*wrf*:*") #just like "ls *wrf*:*"
-    for i, Filename in enumerate(FileID): print("\033[92m({}){}\033[0m".format(i,Filename))
+def search_wrf_file(Path="./",add_fs=False):
+    FileID = sorted(glob.glob(Path+"*wrf*:*"), key=os.path.getmtime) #just like "ls -tr *wrf*:*"
+    if add_fs == False:
+       for i, Filename in enumerate(FileID): print("\033[92m({}){}\033[0m".format(i,Filename))
     ID = input("\033[92mInput File ID[0-{}]: \033[0m".format(len(FileID)-1))
     if ID.replace(".","",1).isdigit() and float(ID) >= 0.0: #integer or float True
        File = FileID[int(round(float(ID),0))]
@@ -37,10 +76,15 @@ def search_wrf_file(Path="./"):
     return File
 
 def add_files(File,Path="./"):
-    add_file_log = input("\033[92mAdd another experiment ? (Y/N) \033[0m")
-    while add_file_log == "Y":
-          File.append(search_wrf_file(Path))
-          add_file_log = input("\033[92mAdd another experiment ? (Y/N) \033[0m")
+    add_file_log = input("\033[92mAdd another experiment ? ([Y]/N) \033[0m")
+    add_file_log = np.where(add_file_log == "n","N",add_file_log)
+    while add_file_log != "N":
+          File.append(search_wrf_file(Path,add_fs=True))
+          add_file_log = input("\033[92mAdd another experiment ? ([Y]/N) \033[0m")
+    print("The files had selected: ")
+    for ff in File:
+        print("\033[103m\033[30m"+ff+"\033[0m")
+    print("-"*70)
     return File
 
 def check_plt_time(nt,times):
@@ -54,7 +98,7 @@ def check_plt_time(nt,times):
           tid = [np.int(i) for i in tid]
           if len(times) <= 30:
              for i, time in enumerate(times):
-                 time_print = "\t({:02d}){}".format(i,str(time.values)[0:19])
+                 time_print = "\t({:02d}){}".format(i,time)
                  if i >= tid[0] and i <= tid[1]: print(time_print)
                  else: print("\033[90m"+time_print+"\033[0m")
           else:
@@ -63,23 +107,24 @@ def check_plt_time(nt,times):
                  for j,time in enumerate(times):
                      if j % 30 == i:
                         if j >= tid[0] and j <= tid[1]:
-                           time_print = time_print+"\t({:02d}){}".format(j,str(time.values)[0:19])
+                           time_print = time_print+"\t({:02d}){}".format(j,time)
                         else: 
                            time_print = time_print+"\033[90m\t({:02d}){}\033[0m"\
-                                        .format(j,str(time.values)[0:19])
+                                        .format(j,time)
                  print(time_print)
 
-          check_time = input("\033[92mConfirm for the selected time ? (Y/N) \033[0m").strip()
+          check_time = input("\033[92mConfirm for the selected time ? (Y/[N]) \033[0m").strip()
           check_time = np.where(check_time == "y","Y",check_time)
+    print(u"--\u00B5"*35+"--")
     return tid
 
 #Shapefile reference: http://www.diva-gis.org/gdata
 #                     https://data.gov.tw/dataset/7442
 #                     https://data.gov.tw/dataset/13795
-#Local Path: /home/WRF/shapefile/(Shimen/)
-def add_shapefile_polylines(ff,wks,plot,color="black",thick=10.0):
+#Local Path: /home/WRF/shapefile/(Shimen/) at Prof. Chung's Server
+def add_shapefile_polylines(input_shapefile,wks,plot,color="black",thick=10.0):
     """ Attach shapefile polylines to map """
-    f_shap = Nio.open_file(ff, "r")
+    f_shap = Nio.open_file(input_shapefile, "r")
     lon = f_shap.variables["x"][:] #np.ravel()
     lat = f_shap.variables["y"][:]
     lnres = Ngl.Resources()
@@ -88,7 +133,7 @@ def add_shapefile_polylines(ff,wks,plot,color="black",thick=10.0):
     lnres.gsSegments = f_shap.variables["segments"][:,0]
     return Ngl.add_polyline(wks, plot, lon, lat, lnres)
 
-def get_shp_traces(ff,color="black",thick=10.0):
+def get_shp_traces(input_shapefile,color="black",thick=10.0):
     """ for 'plotly' attach shapefile polylines to map (gsn_code.ncl) """
     # init. plotting list
     data = dict(
@@ -98,7 +143,7 @@ def get_shp_traces(ff,color="black",thick=10.0):
         line=dict(color=color),
         name=' '
     )
-    f_shap = Nio.open_file(ff, "r")
+    f_shap = Nio.open_file(input_shapefile, "r")
     #print(f_shap)
     #---Read global attributes
     geom_segIndex = f_shap.geom_segIndex
@@ -128,6 +173,7 @@ def plt_marker(wks,plot,lat,lon,log,jc=50,ic=50,\
                    idx=12,sz=20.0,tk=10.0,cr="black"):
     """ Add some polymarkers showing the original locations of the X,Y points."""
     def add_polymarker(wks,plot,xd,yd,index,size,thick,color):
+        """https://www.ncl.ucar.edu/Document/Functions/Built-in/NhlNewMarker.shtml"""
         poly_res = Ngl.Resources()
         poly_res.gsMarkerIndex = index #4   # choose circle as polymarker
         poly_res.gsMarkerSizeF = size       # select size to avoid streaking
@@ -139,7 +185,7 @@ def plt_marker(wks,plot,lat,lon,log,jc=50,ic=50,\
     check_plt = ""
     if log == 0:
        #Default: N
-       check_plt = input("\033[92mPlot Marker at ({},{}) ? (Y/N) \033[0m".format(jc,ic))
+       check_plt = input("\033[92mPlot Marker at ({},{}) ? (Y/[N]) \033[0m".format(jc,ic))
        check_plt = np.where(check_plt == "y","Y",check_plt)
     if check_plt == "Y" or log == 1: 
        xd = lon[jc,ic]; yd = lat[jc,ic]
@@ -152,7 +198,7 @@ def plt_marker(wks,plot,lat,lon,log,jc=50,ic=50,\
  
 def target_area(res,lat,lon,jc=50,ic=50,jrg=20,irg=20):
     plt_target_area = False #Default: N
-    check_plt_area = input("\033[92mPlot target area ? (Y/N) \033[0m")
+    check_plt_area = input("\033[92mPlot target area ? (Y/[N]) \033[0m")
     check_plt_area = np.where(check_plt_area == "y","Y",check_plt_area)
     if check_plt_area == "Y": 
        pt = [jc,ic] 
@@ -175,40 +221,53 @@ def target_area(res,lat,lon,jc=50,ic=50,jrg=20,irg=20):
         
     return res, ii, jj, plt_target_area
 
-#Test ProcessPoolExecutor & ThreadPoolExecutor
-def interp_z(ff,time,varname,thread=True,cores=7):
-    """ thread = True may be faster"""
+#-------------------------------------------------------------------------
+def delta_z(kbot=100,nk=150):
+    ''' interpolation to vertical coordinate, dz for interp_z '''
+    kk = kbot # m bottom
+    dz = 100.0
+    # top 15.0 km
+    lev = np.zeros(nk,dtype=np.float32)
+    for k in range(nk):
+        lev[k] = kk; #print(lev[k])
+        kk += dz
+    print(u"\033[95mHeight range: {} - {} m, \u0394Z = {} m\033[0m" \
+           .format(lev[0],lev[nk-1],dz))
+    return lev, nk
+
+#Test ProcessPoolExecutor(not work here) & ThreadPoolExecutor
+def interp_z(ff,time,varname,speedup=1, cores=7):
+    '''
+    speedup 1: thread, It's may be faster. 
+    '''
     # global variables 
-    z = getvar(ff, "z", timeidx=time) 
+    zz = getvar(ff, "z", timeidx=time) 
     var = getvar(ff, str(varname), timeidx=time)
-    """ interpolation to vertical coordinate """
-    def delta_z(kbot=100,nk=150):
-        kk = kbot # m bottom
-        # top 15.0 km
-        lev = np.zeros(nk,dtype=np.float32)
-        for k in range(nk):
-            lev[k] = kk; #print(lev[k])
-            kk += 100.0
-        return lev, nk
+    def wrf_interp(level):
+        result = interplevel(var, zz, level)
+        return result
 
     (lev,nk) = delta_z() # dz for interpolation
     ny = np.int32(len(var[0,:,0]))
     nx = np.int32(len(var[0,0,:]))
     var_m = np.zeros(shape=(nk,ny,nx), dtype=np.float32)
-    print("Interpolation dimensions (k,j,i): \033[93m{}\033[0m".format(var_m.shape))
-    if thread:
+    print("Time index: {}, Variable: {}".format(time,str(varname)))
+    print("After Interpolation (nk,nj,ni): \033[93m{}\033[0m".format(var_m.shape))
+    if speedup == 1:
        with ThreadPoolExecutor(max_workers=cores) as executor:
             for k in range(nk):
-                var_m[k,:,:] = executor.submit(interplevel,var,z,lev[k]).result()
+                #var_m[k,:,:] = executor.submit(interplevel,var,zz,lev[k]).result()
+                var_m[k,:,:] = executor.submit(wrf_interp,lev[k]).result()
     else:
        for k in range(nk):
-           var_m[k,:,:] = interplevel(var, z, lev[k])
-   
+           var_m[k,:,:] = interplevel(var, zz, lev[k])
+    var_m = np.where(np.isnan(var_m),fill_value,var_m)
     return var_m
+#-------------------------------------------------------------------------
 
 #-- Routine ngl_Strings: draw left, right and/or center string
 def ngl_Strings(wks, plot, left='', center='', right=''):
-    """
+    ''' 
     *Reference: https://github.com/NCAR/pyngl/issues/11
        ngl_Strings(wks, plot, left='', center='', right='')
 
@@ -217,7 +276,7 @@ def ngl_Strings(wks, plot, left='', center='', right=''):
 			
        Correspond to NCL's 
 	  gsnLeftString, gsnCenterString, gsnRightString'
-    """
+    '''
     assert str(getattr(wks,'__class__')  == "<class 'int'>"), 'ERROR - 1st parameter is not a Ngl wks'
     assert str(getattr(plot,'__class__') == "<class 'ngl.PlotIds'>"), 'ERROR - 2nd parameter is not a Ngl plot'
 	
@@ -245,7 +304,7 @@ def ngl_Strings(wks, plot, left='', center='', right=''):
        txres.txJust = "CenterRight"          #-- text justification
        x = vpx+vpw                           #-- x-position
        Ngl.text_ndc(wks, right, x, y, txres) #-- add text to wks
-
+    #------------------------------------------------------------------------------------------
 def Date_string(yy,mm,dd,hh,mi,TW_LST=False,plotly=False):
     def det_mon_yr_add(y,m,d,h):
         #string to integer
@@ -270,45 +329,48 @@ def Date_string(yy,mm,dd,hh,mi,TW_LST=False,plotly=False):
         return str(yy), format(mm,'02d'), \
                format(dd,'02d'), format(hh,'02d')
     #--------------------------------------
-    time_cord = "UTC"
+    time_cord = 'UTC'
     if TW_LST:
-       time_cord = "LST"
+       time_cord = 'LST'
        hh = str(int(hh) + 8) # UTC to LST, GMT+8
        (yy,mm,dd,hh) = det_mon_yr_add(yy,mm,dd,hh)
        #####yy = str(int(yy) - 1911) # the year of the Republic Era
-       #print("{} LST {} {}, {}".format(hh,dd,mm,yy))
+       #print('{} LST {} {}, {}'.format(hh,dd,mm,yy))
 
     #string to integer
     year = int(yy); mon  = int(mm)
     day  = int(dd); hr   = int(hh)
-    months = ["Jan.","Feb.","Mar.","Apr.","May","June", \
-              "July","Aug.","Sept.","Oct.","Nov.","Dec."]
+    months = ['Jan.','Feb.','Mar.','Apr.','May','June', \
+              'July','Aug.','Sept.','Oct.','Nov.','Dec.']
     for i, month in enumerate(months):
         mm = np.where(mon == i + 1, month, mm)
 
-    days_str = ["st","nd","rd"] # superscript
-    sup = np.array([["~S~","~N~"],["<sup>","</sup>"]])
+    days_str = ['st','nd','rd'] # superscript
+    sup = np.array([['~S~','~N~'],['<sup>','</sup>']])
     s = 0
     if plotly: s = 1
     if day <= 3:
        for i, day_str in enumerate(days_str):
            if day == i+1: dd = dd+sup[s,0]+day_str+sup[s,1]
     else:
-       dd = dd+sup[s,0]+"th"+sup[s,1]
+       dd = dd+sup[s,0]+'th'+sup[s,1]
 
-    date = "{}{} {} {} {}, {}".format(hh,mi,time_cord,dd,mm,yy)
+    date = '{}{} {} {} {}, {}'.format(hh,mi,time_cord,dd,mm,yy)
 
     print(date)
     return date
 
+
 if __name__ == '__main__':
+   Reservoir_loc()
    info()
+   print_time()
    search_wrf_file()
    add_files()
    check_plt_time()
    add_shapefile_polylines()
    get_shp_traces() # plotly
    plt_marker()
-   interp_z()
+   delta_z(); interp_z()
    ngl_Strings()
    Date_string()
